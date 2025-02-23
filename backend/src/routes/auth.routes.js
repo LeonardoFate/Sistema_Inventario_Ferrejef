@@ -1,13 +1,14 @@
-// src/routes/auth.routes.js
 import express from 'express';
+import { login, register, verifyToken } from '../controllers/authController.js';
+import { authenticateToken } from '../middleware/auth.middleware.js';
+
 const router = express.Router();
 
-router.post('/login', (req, res) => {
-    res.json({ message: 'Login route' });
-});
+// Rutas públicas
+router.post('/login', login);
+router.post('/register', register);
 
-router.post('/register', (req, res) => {
-    res.json({ message: 'Register route' });
-});
+// Rutas protegidas
+router.get('/verify', authenticateToken, verifyToken);
 
 export default router;
