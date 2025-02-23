@@ -4,15 +4,28 @@ import { query } from '../config/database.js';
 export const getProducts = async (req, res) => {
     try {
         const result = await query(`
-            SELECT p.*, c.name as category_name
+            SELECT
+                p.*,
+                c.name as category_name,
+                CASE
+                    WHEN p.stock <= p.min_stock THEN true
+                    ELSE false
+                END as low_stock
             FROM products p
             LEFT JOIN categories c ON p.category_id = c.id
             ORDER BY p.name ASC
         `);
-        res.json(result.rows);
+
+        res.json({
+            success: true,
+            data: result.rows
+        });
     } catch (error) {
-        console.error('Error getting products:', error);
-        res.status(500).json({ message: 'Error al obtener productos' });
+        console.error('Error obteniendo productos:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al obtener productos'
+        });
     }
 };
 
@@ -21,20 +34,35 @@ export const getProductById = async (req, res) => {
     try {
         const { id } = req.params;
         const result = await query(`
-            SELECT p.*, c.name as category_name
+            SELECT
+                p.*,
+                c.name as category_name,
+                CASE
+                    WHEN p.stock <= p.min_stock THEN true
+                    ELSE false
+                END as low_stock
             FROM products p
             LEFT JOIN categories c ON p.category_id = c.id
             WHERE p.id = $1
         `, [id]);
 
         if (result.rows.length === 0) {
-            return res.status(404).json({ message: 'Producto no encontrado' });
+            return res.status(404).json({
+                success: false,
+                message: 'Producto no encontrado'
+            });
         }
 
-        res.json(result.rows[0]);
+        res.json({
+            success: true,
+            data: result.rows[0]
+        });
     } catch (error) {
-        console.error('Error getting product:', error);
-        res.status(500).json({ message: 'Error al obtener el producto' });
+        console.error('Error obteniendo producto:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al obtener el producto'
+        });
     }
 };
 
@@ -51,11 +79,34 @@ export const createProduct = async (req, res) => {
             sale_price
         } = req.body;
 
-        // Validaciones básicas
+        // Validaciones
         if (!name || !purchase_price || !sale_price) {
             return res.status(400).json({
+                success: false,
                 message: 'Nombre, precio de compra y precio de venta son requeridos'
             });
+        }
+
+        // Validar que el precio de venta sea mayor al precio de compra
+        if (parseFloat(sale_price) <= parseFloat(purchase_price)) {
+            return res.status(400).json({
+                success: false,
+                message: 'El precio de venta debe ser mayor al precio de compra'
+            });
+        }
+
+        // Validar categoría si se proporciona
+        if (category_id) {
+            const categoryExists = await query(
+                'SELECT id FROM categories WHERE id = $1',
+                [category_id]
+            );
+            if (categoryExists.rows.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'La categoría especificada no existe'
+                });
+            }
         }
 
         const result = await query(`
@@ -75,10 +126,16 @@ export const createProduct = async (req, res) => {
             sale_price
         ]);
 
-        res.status(201).json(result.rows[0]);
+        res.status(201).json({
+            success: true,
+            data: result.rows[0]
+        });
     } catch (error) {
-        console.error('Error creating product:', error);
-        res.status(500).json({ message: 'Error al crear el producto' });
+        console.error('Error creando producto:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al crear el producto'
+        });
     }
 };
 
@@ -98,12 +155,32 @@ export const updateProduct = async (req, res) => {
 
         // Verificar si el producto existe
         const productExists = await query(
-            'SELECT id FROM products WHERE id = $1',
+            'SELECT * FROM products WHERE id = $1',
             [id]
         );
 
         if (productExists.rows.length === 0) {
-            return res.status(404).json({ message: 'Producto no encontrado' });
+            return res.status(404).json({
+                success: false,
+                message: 'Producto no encontrado'
+            });
+        }
+
+        // Validar que el precio de venta sea mayor al precio de compra
+        if (sale_price && purchase_price) {
+            if (parseFloat(sale_price) <= parseFloat(purchase_price)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'El precio de venta debe ser mayor al precio de compra'
+                });
+            }
+        } else if (sale_price) {
+            if (parseFloat(sale_price) <= parseFloat(productExists.rows[0].purchase_price)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'El precio de venta debe ser mayor al precio de compra'
+                });
+            }
         }
 
         const result = await query(`
@@ -115,7 +192,8 @@ export const updateProduct = async (req, res) => {
                 stock = COALESCE($4, stock),
                 min_stock = COALESCE($5, min_stock),
                 purchase_price = COALESCE($6, purchase_price),
-                sale_price = COALESCE($7, sale_price)
+                sale_price = COALESCE($7, sale_price),
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = $8
             RETURNING *
         `, [
@@ -129,10 +207,16 @@ export const updateProduct = async (req, res) => {
             id
         ]);
 
-        res.json(result.rows[0]);
+        res.json({
+            success: true,
+            data: result.rows[0]
+        });
     } catch (error) {
-        console.error('Error updating product:', error);
-        res.status(500).json({ message: 'Error al actualizar el producto' });
+        console.error('Error actualizando producto:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al actualizar el producto'
+        });
     }
 };
 
@@ -148,7 +232,10 @@ export const deleteProduct = async (req, res) => {
         );
 
         if (productExists.rows.length === 0) {
-            return res.status(404).json({ message: 'Producto no encontrado' });
+            return res.status(404).json({
+                success: false,
+                message: 'Producto no encontrado'
+            });
         }
 
         // Verificar si el producto tiene ventas asociadas
@@ -159,15 +246,23 @@ export const deleteProduct = async (req, res) => {
 
         if (salesCheck.rows.length > 0) {
             return res.status(400).json({
+                success: false,
                 message: 'No se puede eliminar el producto porque tiene ventas asociadas'
             });
         }
 
         await query('DELETE FROM products WHERE id = $1', [id]);
-        res.json({ message: 'Producto eliminado correctamente' });
+
+        res.json({
+            success: true,
+            message: 'Producto eliminado correctamente'
+        });
     } catch (error) {
-        console.error('Error deleting product:', error);
-        res.status(500).json({ message: 'Error al eliminar el producto' });
+        console.error('Error eliminando producto:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al eliminar el producto'
+        });
     }
 };
 
@@ -175,16 +270,24 @@ export const deleteProduct = async (req, res) => {
 export const getLowStockProducts = async (req, res) => {
     try {
         const result = await query(`
-            SELECT p.*, c.name as category_name
+            SELECT
+                p.*,
+                c.name as category_name
             FROM products p
             LEFT JOIN categories c ON p.category_id = c.id
             WHERE p.stock <= p.min_stock
             ORDER BY p.stock ASC
         `);
 
-        res.json(result.rows);
+        res.json({
+            success: true,
+            data: result.rows
+        });
     } catch (error) {
-        console.error('Error getting low stock products:', error);
-        res.status(500).json({ message: 'Error al obtener productos con bajo stock' });
+        console.error('Error obteniendo productos con bajo stock:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al obtener productos con bajo stock'
+        });
     }
 };
