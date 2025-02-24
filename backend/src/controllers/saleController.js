@@ -13,24 +13,34 @@ const pool = new Pool({
     port: process.env.DB_PORT
 });
 
-// Crear una venta
+// Crear venta
 export const createSale = async (req, res) => {
     const client = await pool.connect();
     try {
-        await client.query('BEGIN'); // Iniciar transacción
+        await client.query('BEGIN');
 
-        const { client_id, products } = req.body;
-        const user_id = req.user.id; // Obtenido del token
+        const {
+            client_id,
+            products,
+            invoice_series,
+            invoice_number,
+            authorization_number,
+            tax_status = 'DOCUMENTO SIN VALIDEZ TRIBUTARIA'
+        } = req.body;
 
         if (!products || !Array.isArray(products) || products.length === 0) {
             return res.status(400).json({
                 success: false,
-                message: 'Se requiere al menos un producto para la venta'
+                message: 'Se requiere al menos un producto'
             });
         }
 
-        // Calcular total y validar stock
-        let total_amount = 0;
+        // Calcular totales
+        let subtotal = 0;
+        let iva_12 = 0;
+        let iva_0 = 0;
+
+        // Validar y calcular productos
         for (const item of products) {
             const productResult = await client.query(
                 'SELECT stock, sale_price FROM products WHERE id = $1',
@@ -46,32 +56,74 @@ export const createSale = async (req, res) => {
                 throw new Error(`Stock insuficiente para el producto ${item.product_id}`);
             }
 
-            total_amount += product.sale_price * item.quantity;
+            const itemSubtotal = product.sale_price * item.quantity;
+            subtotal += itemSubtotal;
+
+            if (item.iva_type === '0') {
+                iva_0 += itemSubtotal;
+            } else {
+                iva_12 += itemSubtotal * 0.12;
+            }
         }
 
+        const total_amount = subtotal + iva_12;
+
         // Crear la venta
-        const saleResult = await client.query(
-            'INSERT INTO sales (client_id, user_id, total_amount) VALUES ($1, $2, $3) RETURNING *',
-            [client_id, user_id, total_amount]
-        );
+        const saleResult = await client.query(`
+            INSERT INTO sales (
+                client_id,
+                user_id,
+                invoice_series,
+                invoice_number,
+                authorization_number,
+                total_amount,
+                subtotal,
+                iva_0,
+                iva_12,
+                tax_status,
+                sale_date
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP)
+            RETURNING *
+        `, [
+            client_id,
+            req.user.id,
+            invoice_series,
+            invoice_number,
+            authorization_number,
+            total_amount,
+            subtotal,
+            iva_0,
+            iva_12,
+            tax_status
+        ]);
 
         const sale = saleResult.rows[0];
 
-        // Crear detalles de venta y actualizar stock
+        // Crear detalles de venta
         for (const item of products) {
             const productResult = await client.query(
-                'SELECT sale_price FROM products WHERE id = $1',
+                'SELECT name, sale_price FROM products WHERE id = $1',
                 [item.product_id]
             );
 
-            const unit_price = productResult.rows[0].sale_price;
-            const total_price = unit_price * item.quantity;
+            const product = productResult.rows[0];
+            const total_price = product.sale_price * item.quantity;
 
-            // Insertar detalle de venta
-            await client.query(
-                'INSERT INTO sale_details (sale_id, product_id, quantity, unit_price, total_price) VALUES ($1, $2, $3, $4, $5)',
-                [sale.id, item.product_id, item.quantity, unit_price, total_price]
-            );
+            await client.query(`
+                INSERT INTO sale_details (
+                    sale_id,
+                    product_id,
+                    quantity,
+                    unit_price,
+                    total_price
+                ) VALUES ($1, $2, $3, $4, $5)
+            `, [
+                sale.id,
+                item.product_id,
+                item.quantity,
+                product.sale_price,
+                total_price
+            ]);
 
             // Actualizar stock
             await client.query(
@@ -82,12 +134,33 @@ export const createSale = async (req, res) => {
 
         await client.query('COMMIT');
 
+        // Obtener detalles completos
+        const saleDetails = await query(`
+            SELECT
+                s.*,
+                c.name as client_name,
+                c.ruc_ci,
+                c.complete_address,
+                json_agg(
+                    json_build_object(
+                        'product_id', p.id,
+                        'product_name', p.name,
+                        'quantity', sd.quantity,
+                        'unit_price', sd.unit_price,
+                        'total_price', sd.total_price
+                    )
+                ) as products
+            FROM sales s
+            LEFT JOIN clients c ON s.client_id = c.id
+            LEFT JOIN sale_details sd ON s.id = sd.sale_id
+            LEFT JOIN products p ON sd.product_id = p.id
+            WHERE s.id = $1
+            GROUP BY s.id, c.name, c.ruc_ci, c.complete_address
+        `, [sale.id]);
+
         res.status(201).json({
             success: true,
-            data: {
-                ...sale,
-                products: products
-            }
+            data: saleDetails.rows[0]
         });
 
     } catch (error) {
@@ -109,33 +182,26 @@ export const getSales = async (req, res) => {
             SELECT
                 s.*,
                 c.name as client_name,
-                u.username as seller_name
+                json_agg(
+                    json_build_object(
+                        'product_id', p.id,
+                        'product_name', p.name,
+                        'quantity', sd.quantity,
+                        'unit_price', sd.unit_price,
+                        'total_price', sd.total_price
+                    )
+                ) as products
             FROM sales s
             LEFT JOIN clients c ON s.client_id = c.id
-            LEFT JOIN users u ON s.user_id = u.id
+            LEFT JOIN sale_details sd ON s.id = sd.sale_id
+            LEFT JOIN products p ON sd.product_id = p.id
+            GROUP BY s.id, c.name
             ORDER BY s.sale_date DESC
         `);
 
-        // Obtener detalles para cada venta
-        const sales = await Promise.all(result.rows.map(async (sale) => {
-            const detailsResult = await query(`
-                SELECT
-                    sd.*,
-                    p.name as product_name
-                FROM sale_details sd
-                JOIN products p ON sd.product_id = p.id
-                WHERE sd.sale_id = $1
-            `, [sale.id]);
-
-            return {
-                ...sale,
-                details: detailsResult.rows
-            };
-        }));
-
         res.json({
             success: true,
-            data: sales
+            data: result.rows
         });
     } catch (error) {
         console.error('Error obteniendo ventas:', error);
@@ -151,42 +217,39 @@ export const getSaleById = async (req, res) => {
     try {
         const { id } = req.params;
 
-        const saleResult = await query(`
+        const result = await query(`
             SELECT
                 s.*,
                 c.name as client_name,
-                u.username as seller_name
+                c.ruc_ci,
+                c.complete_address,
+                json_agg(
+                    json_build_object(
+                        'product_id', p.id,
+                        'product_name', p.name,
+                        'quantity', sd.quantity,
+                        'unit_price', sd.unit_price,
+                        'total_price', sd.total_price
+                    )
+                ) as products
             FROM sales s
             LEFT JOIN clients c ON s.client_id = c.id
-            LEFT JOIN users u ON s.user_id = u.id
+            LEFT JOIN sale_details sd ON s.id = sd.sale_id
+            LEFT JOIN products p ON sd.product_id = p.id
             WHERE s.id = $1
+            GROUP BY s.id, c.name, c.ruc_ci, c.complete_address
         `, [id]);
 
-        if (saleResult.rows.length === 0) {
+        if (result.rows.length === 0) {
             return res.status(404).json({
                 success: false,
                 message: 'Venta no encontrada'
             });
         }
 
-        const sale = saleResult.rows[0];
-
-        // Obtener detalles de la venta
-        const detailsResult = await query(`
-            SELECT
-                sd.*,
-                p.name as product_name
-            FROM sale_details sd
-            JOIN products p ON sd.product_id = p.id
-            WHERE sd.sale_id = $1
-        `, [id]);
-
         res.json({
             success: true,
-            data: {
-                ...sale,
-                details: detailsResult.rows
-            }
+            data: result.rows[0]
         });
     } catch (error) {
         console.error('Error obteniendo venta:', error);
@@ -213,39 +276,45 @@ export const getSalesByDate = async (req, res) => {
             SELECT
                 s.*,
                 c.name as client_name,
-                u.username as seller_name
+                c.ruc_ci,
+                c.complete_address,
+                json_agg(
+                    json_build_object(
+                        'product_id', p.id,
+                        'product_name', p.name,
+                        'quantity', sd.quantity,
+                        'unit_price', sd.unit_price,
+                        'total_price', sd.total_price
+                    )
+                ) as products
             FROM sales s
             LEFT JOIN clients c ON s.client_id = c.id
-            LEFT JOIN users u ON s.user_id = u.id
+            LEFT JOIN sale_details sd ON s.id = sd.sale_id
+            LEFT JOIN products p ON sd.product_id = p.id
             WHERE s.sale_date::date BETWEEN $1::date AND $2::date
+            GROUP BY s.id, c.name, c.ruc_ci, c.complete_address
             ORDER BY s.sale_date DESC
         `, [start_date, end_date]);
 
-        const sales = await Promise.all(result.rows.map(async (sale) => {
-            const detailsResult = await query(`
-                SELECT
-                    sd.*,
-                    p.name as product_name
-                FROM sale_details sd
-                JOIN products p ON sd.product_id = p.id
-                WHERE sd.sale_id = $1
-            `, [sale.id]);
-
-            return {
-                ...sale,
-                details: detailsResult.rows
-            };
-        }));
+        const summary = {
+            total_sales: result.rows.length,
+            total_amount: result.rows.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0),
+            start_date,
+            end_date
+        };
 
         res.json({
             success: true,
-            data: sales
+            data: {
+                summary,
+                sales: result.rows
+            }
         });
     } catch (error) {
         console.error('Error obteniendo ventas por fecha:', error);
         res.status(500).json({
             success: false,
-            message: 'Error al obtener las ventas'
+            message: 'Error al obtener las ventas por fecha'
         });
     }
 };
