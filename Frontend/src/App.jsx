@@ -14,27 +14,27 @@ import Clients from './pages/Clients';
 import Reports from './pages/Reports';
 
 function App() {
-  return (
-    <BrowserRouter>
-      <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<Login />} />
+    return (
+        <BrowserRouter>
+            <AuthProvider>
+                <Routes>
+                    <Route path="/login" element={<Login />} />
 
-          <Route element={<PrivateRoute />}>
-            <Route element={<Layout />}>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/products" element={<Products />} />
-              <Route path="/categories" element={<Categories />} />
-              <Route path="/sales" element={<Sales />} />
-              <Route path="/sales/new" element={<NewSale />} />
-              <Route path="/clients" element={<Clients />} />
-              <Route path="/reports" element={<Reports />} />
-            </Route>
-          </Route>
-        </Routes>
-      </AuthProvider>
-    </BrowserRouter>
-  );
+                    <Route element={<PrivateRoute />}>
+                        <Route element={<Layout />}>
+                            <Route path="/" element={<Dashboard />} />
+                            <Route path="/products" element={<Products />} />
+                            <Route path="/categories" element={<Categories />} />
+                            <Route path="/sales" element={<Sales />} />
+                            <Route path="/sales/new" element={<NewSale />} />
+                            <Route path="/clients" element={<Clients />} />
+                            <Route path="/reports" element={<Reports />} />
+                        </Route>
+                    </Route>
+                </Routes>
+            </AuthProvider>
+        </BrowserRouter>
+    );
 }
 
 export default App;
