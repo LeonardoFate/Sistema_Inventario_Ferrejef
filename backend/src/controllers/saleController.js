@@ -62,7 +62,7 @@ export const createSale = async (req, res) => {
             if (item.iva_type === '0') {
                 iva_0 += itemSubtotal;
             } else {
-                iva_12 += itemSubtotal * 0.12;
+                iva_12 += itemSubtotal * 0;
             }
         }
 
@@ -134,13 +134,14 @@ export const createSale = async (req, res) => {
 
         await client.query('COMMIT');
 
-        // Obtener detalles completos
+        // Obtener detalles completos con los nuevos campos de cliente
         const saleDetails = await query(`
             SELECT
                 s.*,
                 c.name as client_name,
-                c.ruc_ci,
-                c.complete_address,
+                c.identification_type,
+                c.identification,
+                c.address,
                 json_agg(
                     json_build_object(
                         'product_id', p.id,
@@ -155,7 +156,7 @@ export const createSale = async (req, res) => {
             LEFT JOIN sale_details sd ON s.id = sd.sale_id
             LEFT JOIN products p ON sd.product_id = p.id
             WHERE s.id = $1
-            GROUP BY s.id, c.name, c.ruc_ci, c.complete_address
+            GROUP BY s.id, c.name, c.identification_type, c.identification, c.address
         `, [sale.id]);
 
         res.status(201).json({
@@ -182,6 +183,8 @@ export const getSales = async (req, res) => {
             SELECT
                 s.*,
                 c.name as client_name,
+                c.identification_type,
+                c.identification,
                 json_agg(
                     json_build_object(
                         'product_id', p.id,
@@ -195,7 +198,7 @@ export const getSales = async (req, res) => {
             LEFT JOIN clients c ON s.client_id = c.id
             LEFT JOIN sale_details sd ON s.id = sd.sale_id
             LEFT JOIN products p ON sd.product_id = p.id
-            GROUP BY s.id, c.name
+            GROUP BY s.id, c.name, c.identification_type, c.identification
             ORDER BY s.sale_date DESC
         `);
 
@@ -221,8 +224,9 @@ export const getSaleById = async (req, res) => {
             SELECT
                 s.*,
                 c.name as client_name,
-                c.ruc_ci,
-                c.complete_address,
+                c.identification_type,
+                c.identification,
+                c.address,
                 json_agg(
                     json_build_object(
                         'product_id', p.id,
@@ -237,7 +241,7 @@ export const getSaleById = async (req, res) => {
             LEFT JOIN sale_details sd ON s.id = sd.sale_id
             LEFT JOIN products p ON sd.product_id = p.id
             WHERE s.id = $1
-            GROUP BY s.id, c.name, c.ruc_ci, c.complete_address
+            GROUP BY s.id, c.name, c.identification_type, c.identification, c.address
         `, [id]);
 
         if (result.rows.length === 0) {
@@ -255,7 +259,8 @@ export const getSaleById = async (req, res) => {
         console.error('Error obteniendo venta:', error);
         res.status(500).json({
             success: false,
-            message: 'Error al obtener la venta'
+            message: 'Error al obtener la venta',
+            errorDetails: error.message
         });
     }
 };
@@ -276,8 +281,9 @@ export const getSalesByDate = async (req, res) => {
             SELECT
                 s.*,
                 c.name as client_name,
-                c.ruc_ci,
-                c.complete_address,
+                c.identification_type,
+                c.identification,
+                c.address,
                 json_agg(
                     json_build_object(
                         'product_id', p.id,
@@ -292,7 +298,7 @@ export const getSalesByDate = async (req, res) => {
             LEFT JOIN sale_details sd ON s.id = sd.sale_id
             LEFT JOIN products p ON sd.product_id = p.id
             WHERE s.sale_date::date BETWEEN $1::date AND $2::date
-            GROUP BY s.id, c.name, c.ruc_ci, c.complete_address
+            GROUP BY s.id, c.name, c.identification_type, c.identification, c.address
             ORDER BY s.sale_date DESC
         `, [start_date, end_date]);
 

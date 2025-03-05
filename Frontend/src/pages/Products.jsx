@@ -12,9 +12,11 @@ function Products() {
         stock: 0,
         min_stock: 5,
         purchase_price: '',
-        sale_price: ''
+        sale_price: '',
+        profit_percentage: '' // Nuevo campo
     });
     const [categories, setCategories] = useState([]);
+    const [priceMode, setPriceMode] = useState('sale_price'); // 'sale_price' o 'profit_percentage'
 
     // Función para obtener productos
     const fetchProducts = () => {
@@ -74,13 +76,62 @@ function Products() {
         fetchCategories();
     }, []);
 
+    // Función para calcular precio de venta a partir del precio de compra y porcentaje
+    const calculateSalePrice = (purchasePrice, profitPercentage) => {
+        if (!purchasePrice || !profitPercentage) return '';
+        const purchase = parseFloat(purchasePrice);
+        const profit = parseFloat(profitPercentage);
+        return (purchase * (1 + profit / 100)).toFixed(2);
+    };
+
+    // Función para calcular porcentaje de ganancia a partir de precios
+    const calculateProfitPercentage = (purchasePrice, salePrice) => {
+        if (!purchasePrice || !salePrice) return '';
+        const purchase = parseFloat(purchasePrice);
+        const sale = parseFloat(salePrice);
+        if (purchase <= 0) return '';
+        return (((sale / purchase) - 1) * 100).toFixed(2);
+    };
+
     // Función para manejar cambios en el formulario
     const handleInputChange = (e) => {
         const { name, value } = e.target;
-        setProductForm(prev => ({
-            ...prev,
-            [name]: value
-        }));
+        setProductForm(prev => {
+            const updated = { ...prev, [name]: value };
+
+            // Cálculos automáticos
+            if (name === 'purchase_price') {
+                if (priceMode === 'profit_percentage' && updated.profit_percentage) {
+                    updated.sale_price = calculateSalePrice(value, updated.profit_percentage);
+                } else if (priceMode === 'sale_price' && updated.sale_price) {
+                    updated.profit_percentage = calculateProfitPercentage(value, updated.sale_price);
+                }
+            } else if (name === 'profit_percentage' && priceMode === 'profit_percentage') {
+                updated.sale_price = calculateSalePrice(updated.purchase_price, value);
+            } else if (name === 'sale_price' && priceMode === 'sale_price') {
+                updated.profit_percentage = calculateProfitPercentage(updated.purchase_price, value);
+            }
+
+            return updated;
+        });
+    };
+
+    // Función para cambiar entre modos de precio
+    const handlePriceModeChange = (mode) => {
+        setPriceMode(mode);
+
+        // Recalcular el valor que corresponda según el nuevo modo
+        if (mode === 'profit_percentage' && productForm.purchase_price && productForm.sale_price) {
+            setProductForm(prev => ({
+                ...prev,
+                profit_percentage: calculateProfitPercentage(prev.purchase_price, prev.sale_price)
+            }));
+        } else if (mode === 'sale_price' && productForm.purchase_price && productForm.profit_percentage) {
+            setProductForm(prev => ({
+                ...prev,
+                sale_price: calculateSalePrice(prev.purchase_price, prev.profit_percentage)
+            }));
+        }
     };
 
     // Función para manejar agregar producto
@@ -93,8 +144,10 @@ function Products() {
             stock: 0,
             min_stock: 5,
             purchase_price: '',
-            sale_price: ''
+            sale_price: '',
+            profit_percentage: ''
         });
+        setPriceMode('sale_price');
         setShowModal(true);
     };
 
@@ -108,8 +161,10 @@ function Products() {
             stock: product.stock || 0,
             min_stock: product.min_stock || 5,
             purchase_price: product.purchase_price,
-            sale_price: product.sale_price
+            sale_price: product.sale_price,
+            profit_percentage: product.profit_percentage || ''
         });
+        setPriceMode('sale_price');
         setShowModal(true);
     };
 
@@ -122,13 +177,23 @@ function Products() {
             : "http://localhost:3000/api/products";
         const method = currentProduct ? "PUT" : "POST";
 
+        const dataToSend = { ...productForm };
+
+        // Si estamos en modo porcentaje, podemos omitir el sale_price
+        if (priceMode === 'profit_percentage') {
+            // El backend calculará el sale_price
+        } else {
+            // El backend calculará el profit_percentage
+            delete dataToSend.profit_percentage;
+        }
+
         fetch(url, {
             method: method,
             headers: {
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${token}`
             },
-            body: JSON.stringify(productForm)
+            body: JSON.stringify(dataToSend)
         })
             .then(response => response.json())
             .then(data => {
@@ -145,6 +210,7 @@ function Products() {
                 alert("Error al procesar el producto");
             });
     };
+
     // Función para manejar eliminación de producto
     const handleDeleteProduct = (productId) => {
         const token = localStorage.getItem("token");
@@ -160,7 +226,6 @@ function Products() {
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        // Recargar la lista de productos
                         fetchProducts();
                         alert("Producto eliminado correctamente");
                     } else {
@@ -199,6 +264,7 @@ function Products() {
                                 <th className="py-3 px-4 text-left">Stock</th>
                                 <th className="py-3 px-4 text-left">P.COMPRA</th>
                                 <th className="py-3 px-4 text-left">P.VENTA</th>
+                                <th className="py-3 px-4 text-left">% Ganancia</th>
                                 <th className="py-3 px-4 text-left">Acciones</th>
                             </tr>
                         </thead>
@@ -215,6 +281,11 @@ function Products() {
                                         </td>
                                         <td className="py-3 px-4">S/ {parseFloat(product.purchase_price).toFixed(2)}</td>
                                         <td className="py-3 px-4">S/ {parseFloat(product.sale_price).toFixed(2)}</td>
+                                        <td className="py-3 px-4">
+                                            {product.profit_percentage
+                                                ? `${parseFloat(product.profit_percentage).toFixed(2)}%`
+                                                : "-"}
+                                        </td>
                                         <td className="py-3 px-4">
                                             <button
                                                 onClick={() => handleEditProduct(product)}
@@ -233,7 +304,7 @@ function Products() {
                                 ))
                             ) : (
                                 <tr>
-                                    <td colSpan="7" className="py-3 px-4 text-center text-gray-600">
+                                    <td colSpan="8" className="py-3 px-4 text-center text-gray-600">
                                         No hay productos disponibles
                                     </td>
                                 </tr>
@@ -298,6 +369,17 @@ function Products() {
                                 />
                             </div>
                             <div className="mb-4">
+                                <label className="block mb-2">Stock Mínimo</label>
+                                <input
+                                    type="number"
+                                    name="min_stock"
+                                    value={productForm.min_stock}
+                                    onChange={handleInputChange}
+                                    className="w-full p-2 border rounded"
+                                    min="0"
+                                />
+                            </div>
+                            <div className="mb-4">
                                 <label className="block mb-2">Precio de Compra</label>
                                 <input
                                     type="number"
@@ -310,19 +392,67 @@ function Products() {
                                     required
                                 />
                             </div>
+
+                            {/* Selector de modo de precio */}
                             <div className="mb-4">
-                                <label className="block mb-2">Precio de Venta</label>
-                                <input
-                                    type="number"
-                                    name="sale_price"
-                                    value={productForm.sale_price}
-                                    onChange={handleInputChange}
-                                    className="w-full p-2 border rounded"
-                                    step="0.01"
-                                    min="0"
-                                    required
-                                />
+                                <div className="flex border rounded">
+                                    <button
+                                        type="button"
+                                        className={`flex-1 py-2 ${priceMode === 'sale_price' ? 'bg-blue-100 text-blue-800' : 'bg-white text-gray-700'}`}
+                                        onClick={() => handlePriceModeChange('sale_price')}
+                                    >
+                                        Precio Venta
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`flex-1 py-2 ${priceMode === 'profit_percentage' ? 'bg-blue-100 text-blue-800' : 'bg-white text-gray-700'}`}
+                                        onClick={() => handlePriceModeChange('profit_percentage')}
+                                    >
+                                        % Ganancia
+                                    </button>
+                                </div>
                             </div>
+
+                            {priceMode === 'sale_price' ? (
+                                <div className="mb-4">
+                                    <label className="block mb-2">Precio de Venta</label>
+                                    <input
+                                        type="number"
+                                        name="sale_price"
+                                        value={productForm.sale_price}
+                                        onChange={handleInputChange}
+                                        className="w-full p-2 border rounded"
+                                        step="0.01"
+                                        min="0"
+                                        required
+                                    />
+                                    {productForm.purchase_price && productForm.sale_price && (
+                                        <p className="mt-1 text-sm text-gray-600">
+                                            Ganancia: {calculateProfitPercentage(productForm.purchase_price, productForm.sale_price)}%
+                                        </p>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="mb-4">
+                                    <label className="block mb-2">Porcentaje de Ganancia (%)</label>
+                                    <input
+                                        type="number"
+                                        name="profit_percentage"
+                                        value={productForm.profit_percentage}
+                                        onChange={handleInputChange}
+                                        className="w-full p-2 border rounded"
+                                        step="0.01"
+                                        min="0"
+                                        required
+                                    />
+                                    {productForm.purchase_price && productForm.profit_percentage && (
+                                        <p className="mt-1 text-sm text-gray-600">
+                                            Precio de venta: S/ {calculateSalePrice(productForm.purchase_price, productForm.profit_percentage)}
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
                             <div className="flex justify-between">
                                 <button
                                     type="submit"

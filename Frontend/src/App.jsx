@@ -12,6 +12,7 @@ import Sales from './pages/Sales';
 import NewSale from './pages/NewSale';
 import Clients from './pages/Clients';
 import Reports from './pages/Reports';
+import SaleDetail from './pages/SaleDetail';
 
 function App() {
     return (
@@ -26,6 +27,7 @@ function App() {
                             <Route path="/products" element={<Products />} />
                             <Route path="/categories" element={<Categories />} />
                             <Route path="/sales" element={<Sales />} />
+                            <Route path="/sales/:id" element={<SaleDetail />} />
                             <Route path="/sales/new" element={<NewSale />} />
                             <Route path="/clients" element={<Clients />} />
                             <Route path="/reports" element={<Reports />} />
